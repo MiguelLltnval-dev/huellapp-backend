@@ -14,21 +14,20 @@ const camposPublicosUsuario = (usuario) => ({
 
 // POST: Registrar nuevo usuario
 router.post('/registro', async (req, res) => {
-    console.log('Payload registro recibido:', req.body);
     try {
         req.body = req.body || {};
         const { nombre, email, password, departamento, ciudad } = req.body || {};
-        const telefono = (req.body.telefono || req.body.celular || '').trim();
+        const telefono = req.body.telefono || req.body.celular || '';
         const datos = {
-            nombre: nombre?.trim(),
-            email: email?.trim(),
+            nombre: typeof nombre === 'string' ? nombre.trim() : nombre,
+            email: typeof email === 'string' ? email.trim() : email,
             password,
-            telefono,
-            departamento: departamento?.trim(),
-            ciudad: ciudad?.trim()
+            telefono: typeof telefono === 'string' ? telefono.trim() : telefono,
+            departamento: typeof departamento === 'string' ? departamento.trim() : departamento,
+            ciudad: typeof ciudad === 'string' ? ciudad.trim() : ciudad
         };
 
-        if (Object.values(datos).some((valor) =>
+        if ([datos.nombre, datos.email, datos.password].some((valor) =>
             valor === null || valor === undefined ||
             (typeof valor === 'string' && valor.trim() === '')
         )) {
@@ -56,11 +55,11 @@ router.post('/registro', async (req, res) => {
             usuario: camposPublicosUsuario(guardado)
         });
     } catch (error) {
-        console.error('Error en POST /usuarios/registro:', error);
+        console.error('DETALLE EXACTO DEL ERROR:', error);
         if (error.code === 11000) {
             return res.status(400).json({ error: 'El correo ya está registrado' });
         }
-        res.status(500).json({ error: 'Error al registrar usuario' });
+        res.status(500).json({ error: error.message || 'Error al registrar usuario' });
     }
 });
 

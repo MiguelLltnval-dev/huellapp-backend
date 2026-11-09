@@ -5,24 +5,23 @@ const UsuarioSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true },
-    telefono: { type: String, required: true },
-    departamento: { type: String, required: true },
+    telefono: { type: String, required: false },
+    departamento: { type: String, required: false },
     celular: { type: String },
-    ciudad: { type: String, required: true },
+    ciudad: { type: String, required: false },
     identidadVerificada: { type: Boolean, default: false }
 }, { timestamps: true });
 
 // Encriptar la contraseña antes de guardarla
-UsuarioSchema.pre('save', async function(next) {
-    if (!this.isModified('password')) return next();
+UsuarioSchema.pre('save', async function() {
+    if (!this.isModified('password')) return;
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
-    next();
 });
 
 // Método para verificar la contraseña en el Login
-UsuarioSchema.methods.compararPassword = async function(passwordIngresada) {
-    return await bcrypt.compare(passwordIngresada, this.password);
+UsuarioSchema.methods.compararPassword = async function(candidata) {
+    return await bcrypt.compare(candidata, this.password);
 };
 
 module.exports = mongoose.model('Usuario', UsuarioSchema);
