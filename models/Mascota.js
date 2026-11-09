@@ -6,7 +6,7 @@ const MascotaSchema = new mongoose.Schema({
     especie: { type: String, required: true },
     color: { type: String, required: true },
     ciudad: { type: String, required: true },
-    estado: { type: String, enum: ['PERDIDO', 'EN_CASA'], default: 'PERDIDO' },
+    estado: { type: String, enum: ['PERDIDO', 'EN CASA', 'EN_CASA'], default: 'PERDIDO' },
     
     // Divisor de flujos (Arquitectura)
     tipoPublicacion: { type: String, enum: ['emergencia', 'adopcion'], default: 'emergencia' },

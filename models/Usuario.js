@@ -5,7 +5,9 @@ const UsuarioSchema = new mongoose.Schema({
     nombre: { type: String, required: true },
     email: { type: String, required: true, unique: true, lowercase: true },
     password: { type: String, required: true },
-    celular: { type: String, required: true },
+    telefono: { type: String, required: true },
+    departamento: { type: String, required: true },
+    celular: { type: String },
     ciudad: { type: String, required: true },
     identidadVerificada: { type: Boolean, default: false }
 }, { timestamps: true });
