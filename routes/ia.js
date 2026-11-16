@@ -3,11 +3,26 @@ const Groq = require('groq-sdk');
 
 const router = express.Router();
 
-const SYSTEM_PROMPT = `Eres el asistente virtual de HuellApp, una app colombiana de mascotas perdidas. Responde siempre amablemente y de forma concisa.
-Si el usuario reporta que vio una mascota perdida existente, pon esPista en true y pistaGenerada en un objeto con descripcion y ubicacion. En este caso, pon esBorrador en false y mascotaGenerada en null.
-Si el usuario reporta una mascota perdida nueva, pon esBorrador en true, extrae especie, raza, color y ciudad, y usa esPista false con pistaGenerada null. Si un dato no está presente, usa un string vacío y no lo inventes.
-Si el usuario solo saluda o el avistamiento no es claro, pon esBorrador y esPista en false y mascotaGenerada y pistaGenerada en null.
-Devuelve únicamente un objeto JSON válido con exactamente estas propiedades: respuesta (string), esBorrador (boolean), mascotaGenerada (null u objeto con especie, raza, color y ciudad como strings), esPista (boolean) y pistaGenerada (null u objeto con descripcion y ubicacion como strings). No agregues texto ni formato Markdown.`;
+const promptSistema = `
+    Eres el asistente virtual experto de HuellApp, una app colombiana solidaria de mascotas perdidas.
+    REGLAS DE ORO:
+    1. NUNCA inventes mascotas. Solo responde sobre la mascota que el usuario te menciona.
+    2. Si el usuario te dice que encontró o vio una mascota, EXTRAE su información y pon 'esBorrador': true.
+    3. NUNCA le digas al usuario que vaya a menús ficticios como "sección de mascotas perdidas" o "Agregar mascota".
+    4. Tu única función es escuchar pistas de avistamientos, responder de forma corta, empática y animar al usuario a seguir ayudando.
+    5. No reveles números de teléfono ni datos privados por seguridad. Menciona que el dueño se comunicará si la pista es útil.
+    
+    DEBES RESPONDER ÚNICA Y EXCLUSIVAMENTE CON UN JSON VÁLIDO (SIN MARKDOWN) CON ESTA ESTRUCTURA EXACTA:
+    {
+      "respuesta": "Texto corto y directo de lo que dices",
+      "esBorrador": true/false,
+      "esPista": true/false,
+      "pistaGenerada": {
+        "descripcion": "Descripción detallada",
+        "ubicacion": "Ciudad o barrio"
+      }
+    }
+`;
 
 const serializarDetalleError = (detalle, apiKey) => {
     let texto;
@@ -29,63 +44,27 @@ const serializarDetalleError = (detalle, apiKey) => {
 
 const normalizarRespuesta = (datos) => {
     if (!datos || typeof datos !== 'object' || Array.isArray(datos) ||
-        typeof datos.respuesta !== 'string' || typeof datos.esBorrador !== 'boolean') {
+        typeof datos.respuesta !== 'string' ||
+        typeof datos.esBorrador !== 'boolean' ||
+        typeof datos.esPista !== 'boolean') {
         return null;
     }
 
-    if (datos.esPista === true) {
-        const pista = datos.pistaGenerada;
-        if (!pista || typeof pista !== 'object' || Array.isArray(pista) ||
-            typeof pista.descripcion !== 'string' || !pista.descripcion.trim() ||
-            typeof pista.ubicacion !== 'string' || !pista.ubicacion.trim()) {
-            return null;
-        }
-
-        return {
-            respuesta: datos.respuesta,
-            esBorrador: false,
-            mascotaGenerada: null,
-            esPista: true,
-            pistaGenerada: {
-                descripcion: pista.descripcion,
-                ubicacion: pista.ubicacion
-            }
-        };
-    }
-
-    if (!datos.esBorrador) {
-        return {
-            respuesta: datos.respuesta,
-            esBorrador: false,
-            mascotaGenerada: null,
-            esPista: false,
-            pistaGenerada: null
-        };
-    }
-
-    const mascota = datos.mascotaGenerada;
-    if (!mascota || typeof mascota !== 'object' || Array.isArray(mascota)) {
-        return null;
-    }
-
-    const campos = ['especie', 'raza', 'color', 'ciudad'];
-    if (campos.some((campo) =>
-        mascota[campo] !== undefined && typeof mascota[campo] !== 'string'
-    )) {
+    const pista = datos.pistaGenerada;
+    if (!pista || typeof pista !== 'object' || Array.isArray(pista) ||
+        typeof pista.descripcion !== 'string' ||
+        typeof pista.ubicacion !== 'string') {
         return null;
     }
 
     return {
         respuesta: datos.respuesta,
-        esBorrador: true,
-        mascotaGenerada: {
-            especie: mascota.especie || '',
-            raza: mascota.raza || '',
-            color: mascota.color || '',
-            ciudad: mascota.ciudad || ''
-        },
-        esPista: false,
-        pistaGenerada: null
+        esBorrador: datos.esBorrador,
+        esPista: datos.esPista,
+        pistaGenerada: {
+            descripcion: pista.descripcion,
+            ubicacion: pista.ubicacion
+        }
     };
 };
 
@@ -105,8 +84,8 @@ router.post('/chat', async (req, res) => {
         const groq = new Groq({ apiKey: apiKey.trim() });
         const chatCompletion = await groq.chat.completions.create({
             messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: mensaje.trim() }
+                { role: 'system', content: promptSistema },
+                { role: 'user', content: mensaje }
             ],
             model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
             temperature: 0.2,
@@ -128,9 +107,11 @@ router.post('/chat', async (req, res) => {
             return res.status(200).json({
                 respuesta: 'Comprendo, pero tuve problemas estructurando la información. ¿Puedes repetirlo más claramente?',
                 esBorrador: false,
-                mascotaGenerada: null,
                 esPista: false,
-                pistaGenerada: null
+                pistaGenerada: {
+                    descripcion: '',
+                    ubicacion: ''
+                }
             });
         }
 
