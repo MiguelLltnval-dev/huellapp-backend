@@ -1,6 +1,6 @@
 require('dotenv').config();
-if (!process.env.GEMINI_API_KEY) {
-    console.warn('\x1b[1;33m%s\x1b[0m', '⚠️ GEMINI_API_KEY no está configurada; configura esta variable en Render.');
+if (!process.env.GROQ_API_KEY) {
+    console.warn('\x1b[1;33m%s\x1b[0m', '⚠️ GROQ_API_KEY no está configurada; configura esta variable en Render.');
 }
 
 const express = require('express');
@@ -28,7 +28,7 @@ app.get('/', (req, res) => {
 app.use('/api/usuarios', require('./routes/usuarios'));
 app.use('/api/mascotas', require('./routes/mascotas'));
 app.use('/api/ia', require('./routes/ia'));
-app.use('/api', require('./routes/chat'));
+app.use('/api', require('./routes/ia'));
 
 // Iniciar Servidor en 0.0.0.0 para evitar el bloqueo del emulador
 const PORT = process.env.PORT || 3000;

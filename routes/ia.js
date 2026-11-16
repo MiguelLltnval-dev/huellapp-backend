@@ -1,60 +1,24 @@
 const express = require('express');
+const Groq = require('groq-sdk');
+
 const router = express.Router();
 
-const SYSTEM_PROMPT = `Eres el asistente virtual de HuellApp, una app colombiana de mascotas perdidas. Responde siempre amablemente. Si el usuario te da detalles de un avistamiento (ej. 'vi un perro negro en Bogotá'), extrae esos datos.
-
-Devuelve únicamente un JSON válido con las propiedades respuesta (string), esBorrador (boolean) y mascotaGenerada (null u objeto). Si el usuario solo saluda o no describe un avistamiento claro, esBorrador debe ser false y mascotaGenerada null. Si describe un avistamiento claro, esBorrador debe ser true y mascotaGenerada debe contener especie, raza, color y ciudad como strings. No inventes datos que no mencione; deja esos campos como strings vacíos.
-
-Se breve y conciso. No utilices formato Markdown (como negritas con asteriscos ** o listas) en el campo 'respuesta'. Entrega la respuesta lo más rápido posible.`;
-
-const responseSchema = {
-    type: 'OBJECT',
-    properties: {
-        respuesta: { type: 'STRING' },
-        esBorrador: { type: 'BOOLEAN' },
-        mascotaGenerada: {
-            type: 'OBJECT',
-            nullable: true,
-            properties: {
-                especie: { type: 'STRING' },
-                raza: { type: 'STRING' },
-                color: { type: 'STRING' },
-                ciudad: { type: 'STRING' }
-            },
-            required: ['especie', 'raza', 'color', 'ciudad']
-        }
-    },
-    required: ['respuesta', 'esBorrador', 'mascotaGenerada']
-};
-
-const esRespuestaValida = (datos) => {
-    if (!datos || typeof datos.respuesta !== 'string' || typeof datos.esBorrador !== 'boolean') {
-        return false;
-    }
-
-    if (!datos.esBorrador) {
-        return datos.mascotaGenerada === null;
-    }
-
-    const mascota = datos.mascotaGenerada;
-    return mascota !== null &&
-        typeof mascota === 'object' &&
-        ['especie', 'raza', 'color', 'ciudad'].every((campo) =>
-            typeof mascota[campo] === 'string'
-        );
-};
+const SYSTEM_PROMPT = `Eres el asistente virtual de HuellApp, una app colombiana de mascotas perdidas. Responde siempre amablemente y de forma concisa.
+Si el usuario reporta un avistamiento claro, pon esBorrador en true y extrae especie, raza, color y ciudad. Si un dato no está presente, usa un string vacío y no lo inventes.
+Si el usuario solo saluda o el avistamiento no es claro, pon esBorrador en false y mascotaGenerada en null.
+Devuelve únicamente un objeto JSON válido con exactamente estas propiedades: respuesta (string), esBorrador (boolean) y mascotaGenerada (null u objeto con especie, raza, color y ciudad como strings). No agregues texto ni formato Markdown.`;
 
 const serializarDetalleError = (detalle, apiKey) => {
     let texto;
     try {
         texto = typeof detalle === 'string' ? detalle : JSON.stringify(detalle);
     } catch (error) {
-        console.error('No se pudo serializar el detalle de Gemini:', error);
+        console.error('No se pudo serializar el detalle de Groq:', error);
         texto = String(detalle);
     }
 
     texto = texto || 'Error desconocido del servidor.';
-    const clave = apiKey.trim();
+    const clave = typeof apiKey === 'string' ? apiKey.trim() : '';
     if (clave.length >= 8) {
         texto = texto.split(clave).join('[REDACTED]');
     }
@@ -62,77 +26,80 @@ const serializarDetalleError = (detalle, apiKey) => {
     return texto.length > 1500 ? `${texto.slice(0, 1500)}…` : texto;
 };
 
+const normalizarRespuesta = (datos) => {
+    if (!datos || typeof datos !== 'object' || Array.isArray(datos) ||
+        typeof datos.respuesta !== 'string' || typeof datos.esBorrador !== 'boolean') {
+        return null;
+    }
+
+    if (!datos.esBorrador) {
+        return {
+            respuesta: datos.respuesta,
+            esBorrador: false,
+            mascotaGenerada: null
+        };
+    }
+
+    const mascota = datos.mascotaGenerada;
+    if (!mascota || typeof mascota !== 'object' || Array.isArray(mascota)) {
+        return null;
+    }
+
+    const campos = ['especie', 'raza', 'color', 'ciudad'];
+    if (campos.some((campo) =>
+        mascota[campo] !== undefined && typeof mascota[campo] !== 'string'
+    )) {
+        return null;
+    }
+
+    return {
+        respuesta: datos.respuesta,
+        esBorrador: true,
+        mascotaGenerada: {
+            especie: mascota.especie || '',
+            raza: mascota.raza || '',
+            color: mascota.color || '',
+            ciudad: mascota.ciudad || ''
+        }
+    };
+};
+
 router.post('/chat', async (req, res) => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (typeof apiKey !== 'string' || !apiKey.trim()) {
-        return res.status(500).json({
-            mensaje: 'CRÍTICO: No se ha configurado la variable GEMINI_API_KEY en Render'
-        });
+        console.warn('GROQ_API_KEY no está configurada');
+        return res.status(503).json({ error: 'El servicio de IA no está configurado' });
     }
 
     const { mensaje } = req.body || {};
     if (typeof mensaje !== 'string' || !mensaje.trim()) {
-        return res.status(400).json({ error: 'El mensaje es obligatorio' });
+        return res.status(400).json({ error: 'El mensaje es requerido' });
     }
 
-    const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-
     try {
-        const respuestaApi = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-goog-api-key': apiKey.trim()
-                },
-                body: JSON.stringify({
-                    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-                    contents: [{ role: 'user', parts: [{ text: mensaje.trim() }] }],
-                    generationConfig: {
-                        responseMimeType: 'application/json',
-                        responseSchema,
-                        temperature: 0.2
-                    }
-                }),
-                signal: AbortSignal.timeout(60000)
-            }
-        );
+        const groq = new Groq({ apiKey: apiKey.trim() });
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: mensaje.trim() }
+            ],
+            model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
+            temperature: 0.2,
+            response_format: { type: 'json_object' }
+        });
 
-        if (!respuestaApi.ok) {
-            const respuestaError = await respuestaApi.text();
-            let detalleProveedor = respuestaError;
-            try {
-                detalleProveedor = JSON.parse(respuestaError);
-            } catch (parseError) {
-                console.error('La respuesta de error de Gemini no era JSON:', parseError);
-            }
-
-            const errorGemini = new Error(`Gemini respondió con HTTP ${respuestaApi.status}`);
-            errorGemini.response = {
-                status: respuestaApi.status,
-                data: serializarDetalleError(detalleProveedor, apiKey)
-            };
-            throw errorGemini;
-        }
-
-        const resultadoApi = await respuestaApi.json();
-        const texto = resultadoApi.candidates?.[0]?.content?.parts
-            ?.map((parte) => parte.text || '')
-            .join('')
-            .trim();
-
-        if (!texto) {
-            console.error('Gemini devolvió una respuesta vacía');
+        const respuestaCruda = chatCompletion.choices?.[0]?.message?.content;
+        if (typeof respuestaCruda !== 'string' || !respuestaCruda.trim()) {
+            console.error('Groq devolvió una respuesta vacía');
             return res.status(502).json({ error: 'El asistente devolvió una respuesta inválida' });
         }
 
-        const textoLimpio = texto.replace(/```(?:json)?/gi, '').trim();
         let datos;
         try {
-            datos = JSON.parse(textoLimpio);
+            const respuestaLimpia = respuestaCruda.replace(/```(?:json)?/gi, '').trim();
+            datos = JSON.parse(respuestaLimpia);
         } catch (parseError) {
-            console.error('Gemini devolvió JSON inválido:', parseError);
+            console.error('Groq devolvió JSON inválido:', parseError);
             return res.status(200).json({
                 respuesta: 'Comprendo, pero tuve problemas estructurando la información. ¿Puedes repetirlo más claramente?',
                 esBorrador: false,
@@ -140,50 +107,33 @@ router.post('/chat', async (req, res) => {
             });
         }
 
-        if (!esRespuestaValida(datos)) {
-            console.error('Gemini devolvió un JSON con formato inesperado');
+        const respuesta = normalizarRespuesta(datos);
+        if (!respuesta) {
+            console.error('Groq devolvió un JSON con formato inesperado');
             return res.status(502).json({ error: 'El asistente devolvió una respuesta inválida' });
         }
 
-        const mascotaGenerada = datos.esBorrador
-            ? {
-                especie: datos.mascotaGenerada.especie,
-                raza: datos.mascotaGenerada.raza,
-                color: datos.mascotaGenerada.color,
-                ciudad: datos.mascotaGenerada.ciudad
-            }
-            : null;
-
-        return res.status(200).json({
-            respuesta: datos.respuesta,
-            esBorrador: datos.esBorrador,
-            mascotaGenerada
-        });
+        return res.status(200).json(respuesta);
     } catch (error) {
-        console.error('=== ERROR CRÍTICO AL CONTACTAR A GEMINI ===');
-
-        let mensajeReal = 'Error desconocido del servidor.';
-        if (error && error.response && error.response.data) {
-            const data = error.response.data;
-            const detalle = serializarDetalleError(data, apiKey);
-            const estado = error.response.status ? `HTTP ${error.response.status}: ` : '';
-            mensajeReal = `${estado}${detalle}`;
-        } else if (error && error.message) {
-            mensajeReal = error.message;
-        }
-
+        const datoError = error && error.response
+            ? error.response.data || error.response.error
+            : error && error.error;
+        const mensajeReal = datoError || (error && error.message) || 'Error desconocido del servidor.';
         const detalleSeguro = serializarDetalleError(mensajeReal, apiKey);
+
+        console.error('=== ERROR CRÍTICO GROQ ===');
         console.error('Detalle:', detalleSeguro);
         console.error(error instanceof Error
             ? {
                 name: error.name,
                 message: detalleSeguro,
+                status: error.status,
                 stack: error.stack ? serializarDetalleError(error.stack, apiKey) : undefined
             }
             : error);
 
         return res.status(500).json({
-            error: `Fallo en Gemini: ${detalleSeguro}`
+            error: `Fallo en la IA (Groq): ${detalleSeguro}`
         });
     }
 });
