@@ -44,6 +44,24 @@ const esRespuestaValida = (datos) => {
         );
 };
 
+const serializarDetalleError = (detalle, apiKey) => {
+    let texto;
+    try {
+        texto = typeof detalle === 'string' ? detalle : JSON.stringify(detalle);
+    } catch (error) {
+        console.error('No se pudo serializar el detalle de Gemini:', error);
+        texto = String(detalle);
+    }
+
+    texto = texto || 'Error desconocido del servidor.';
+    const clave = apiKey.trim();
+    if (clave.length >= 8) {
+        texto = texto.split(clave).join('[REDACTED]');
+    }
+
+    return texto.length > 1500 ? `${texto.slice(0, 1500)}…` : texto;
+};
+
 router.post('/chat', async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (typeof apiKey !== 'string' || !apiKey.trim()) {
@@ -82,9 +100,20 @@ router.post('/chat', async (req, res) => {
         );
 
         if (!respuestaApi.ok) {
-            const detalle = await respuestaApi.text();
-            console.error(`Error de Gemini (${respuestaApi.status}):`, detalle);
-            return res.status(502).json({ error: 'No se pudo obtener respuesta del asistente' });
+            const respuestaError = await respuestaApi.text();
+            let detalleProveedor = respuestaError;
+            try {
+                detalleProveedor = JSON.parse(respuestaError);
+            } catch (parseError) {
+                console.error('La respuesta de error de Gemini no era JSON:', parseError);
+            }
+
+            const errorGemini = new Error(`Gemini respondió con HTTP ${respuestaApi.status}`);
+            errorGemini.response = {
+                status: respuestaApi.status,
+                data: serializarDetalleError(detalleProveedor, apiKey)
+            };
+            throw errorGemini;
         }
 
         const resultadoApi = await respuestaApi.json();
@@ -131,9 +160,31 @@ router.post('/chat', async (req, res) => {
             mascotaGenerada
         });
     } catch (error) {
-        console.error('Error en POST /api/ia/chat:', error);
-        const detalle = error instanceof Error ? error.message : String(error);
-        return res.status(500).json({ mensaje: `Error interno: ${detalle}` });
+        console.error('=== ERROR CRÍTICO AL CONTACTAR A GEMINI ===');
+
+        let mensajeReal = 'Error desconocido del servidor.';
+        if (error && error.response && error.response.data) {
+            const data = error.response.data;
+            const detalle = serializarDetalleError(data, apiKey);
+            const estado = error.response.status ? `HTTP ${error.response.status}: ` : '';
+            mensajeReal = `${estado}${detalle}`;
+        } else if (error && error.message) {
+            mensajeReal = error.message;
+        }
+
+        const detalleSeguro = serializarDetalleError(mensajeReal, apiKey);
+        console.error('Detalle:', detalleSeguro);
+        console.error(error instanceof Error
+            ? {
+                name: error.name,
+                message: detalleSeguro,
+                stack: error.stack ? serializarDetalleError(error.stack, apiKey) : undefined
+            }
+            : error);
+
+        return res.status(500).json({
+            error: `Fallo en Gemini: ${detalleSeguro}`
+        });
     }
 });
 
