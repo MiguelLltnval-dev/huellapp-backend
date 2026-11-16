@@ -40,12 +40,20 @@ router.post('/', verificarToken, async (req, res) => {
     try {
         const datosMascota = req.body || {};
         const { especie, color, ciudad } = datosMascota;
-        
-        if (!especie || !color || !ciudad) {
+
+        const ciudadLimpia = typeof ciudad === 'string'
+            ? ciudad.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\s+/g, ' ').trim()
+            : '';
+
+        if (!especie || !color || !ciudadLimpia) {
             return res.status(400).json({ error: "Faltan datos obligatorios" });
         }
 
-        const nuevaMascota = new Mascota({ ...datosMascota, usuarioId: req.usuarioId });
+        const nuevaMascota = new Mascota({
+            ...datosMascota,
+            ciudad: ciudadLimpia,
+            usuarioId: req.usuarioId
+        });
         const guardada = await nuevaMascota.save();
         
         console.log(`✅ ${guardada.tipoPublicacion} registrada`);

@@ -1,4 +1,8 @@
 require('dotenv').config();
+if (!process.env.GEMINI_API_KEY) {
+    console.warn('\x1b[1;33m%s\x1b[0m', '⚠️ GEMINI_API_KEY no está configurada; configura esta variable en Render.');
+}
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');

@@ -3,7 +3,9 @@ const router = express.Router();
 
 const SYSTEM_PROMPT = `Eres el asistente virtual de HuellApp, una app colombiana de mascotas perdidas. Responde siempre amablemente. Si el usuario te da detalles de un avistamiento (ej. 'vi un perro negro en Bogotá'), extrae esos datos.
 
-Devuelve únicamente un JSON válido con las propiedades respuesta (string), esBorrador (boolean) y mascotaGenerada (null u objeto). Si el usuario solo saluda o no describe un avistamiento claro, esBorrador debe ser false y mascotaGenerada null. Si describe un avistamiento claro, esBorrador debe ser true y mascotaGenerada debe contener especie, raza, color y ciudad como strings. No inventes datos que no mencione; deja esos campos como strings vacíos.`;
+Devuelve únicamente un JSON válido con las propiedades respuesta (string), esBorrador (boolean) y mascotaGenerada (null u objeto). Si el usuario solo saluda o no describe un avistamiento claro, esBorrador debe ser false y mascotaGenerada null. Si describe un avistamiento claro, esBorrador debe ser true y mascotaGenerada debe contener especie, raza, color y ciudad como strings. No inventes datos que no mencione; deja esos campos como strings vacíos.
+
+Se breve y conciso. No utilices formato Markdown (como negritas con asteriscos ** o listas) en el campo 'respuesta'. Entrega la respuesta lo más rápido posible.`;
 
 const responseSchema = {
     type: 'OBJECT',
@@ -74,7 +76,7 @@ router.post('/chat', async (req, res) => {
                         temperature: 0.2
                     }
                 }),
-                signal: AbortSignal.timeout(30000)
+                signal: AbortSignal.timeout(60000)
             }
         );
 
@@ -95,7 +97,14 @@ router.post('/chat', async (req, res) => {
             return res.status(502).json({ error: 'El asistente devolvió una respuesta inválida' });
         }
 
-        const datos = JSON.parse(texto);
+        let datos;
+        try {
+            datos = JSON.parse(texto);
+        } catch (error) {
+            console.error('Gemini devolvió JSON inválido:', error);
+            return res.status(502).json({ error: 'El asistente devolvió una respuesta inválida' });
+        }
+
         if (!esRespuestaValida(datos)) {
             console.error('Gemini devolvió un JSON con formato inesperado');
             return res.status(502).json({ error: 'El asistente devolvió una respuesta inválida' });
