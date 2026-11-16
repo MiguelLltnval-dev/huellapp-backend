@@ -17,6 +17,10 @@ mongoose.connect(process.env.MONGODB_URI)
     .catch(err => console.error('❌ Error conectando a BD:', err));
 
 // Rutas
+app.get('/', (req, res) => {
+    res.json({ status: 'OK', message: 'API HuellApp en Producción' });
+});
+
 app.use('/api/usuarios', require('./routes/usuarios'));
 app.use('/api/mascotas', require('./routes/mascotas'));
 

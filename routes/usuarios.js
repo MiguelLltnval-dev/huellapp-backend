@@ -7,6 +7,7 @@ const camposPublicosUsuario = (usuario) => ({
     _id: usuario._id,
     nombre: usuario.nombre,
     email: usuario.email,
+    celular: usuario.celular || usuario.telefono || null,
     telefono: usuario.telefono || usuario.celular || null,
     departamento: usuario.departamento || null,
     ciudad: usuario.ciudad

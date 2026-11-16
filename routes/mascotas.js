@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Mascota = require('../models/Mascota');
 const mongoose = require('mongoose');
+const verificarToken = require('../middleware/verificarToken');
 
 // GET: Obtener mascotas (Permite filtrar por emergencia o adopción)
 router.get('/', async (req, res) => {
@@ -19,15 +20,16 @@ router.get('/', async (req, res) => {
 });
 
 // POST: Registrar Mascota (Emergencia o Adopción)
-router.post('/', async (req, res) => {
+router.post('/', verificarToken, async (req, res) => {
     try {
-        const { especie, color, ciudad, usuarioId } = req.body;
+        const datosMascota = req.body || {};
+        const { especie, color, ciudad } = datosMascota;
         
-        if (!especie || !color || !ciudad || !usuarioId) {
+        if (!especie || !color || !ciudad) {
             return res.status(400).json({ error: "Faltan datos obligatorios" });
         }
 
-        const nuevaMascota = new Mascota(req.body);
+        const nuevaMascota = new Mascota({ ...datosMascota, usuarioId: req.usuarioId });
         const guardada = await nuevaMascota.save();
         
         console.log(`✅ ${guardada.tipoPublicacion} registrada`);
@@ -39,7 +41,7 @@ router.post('/', async (req, res) => {
 });
 
 // PATCH: Actualizar el estado de una mascota
-router.patch('/:id/estado', async (req, res) => {
+router.patch('/:id/estado', verificarToken, async (req, res) => {
     try {
         let estadoNormalizado = req.body.estado;
         if (estadoNormalizado === 'EN_CASA') estadoNormalizado = 'EN CASA';
@@ -51,8 +53,8 @@ router.patch('/:id/estado', async (req, res) => {
             return res.status(400).json({ error: 'ID de mascota inválido' });
         }
 
-        const mascotaActualizada = await Mascota.findByIdAndUpdate(
-            req.params.id,
+        const mascotaActualizada = await Mascota.findOneAndUpdate(
+            { _id: req.params.id, usuarioId: req.usuarioId },
             { estado: estadoNormalizado },
             { new: true, runValidators: true }
         );
