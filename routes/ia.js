@@ -45,15 +45,16 @@ const esRespuestaValida = (datos) => {
 };
 
 router.post('/chat', async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (typeof apiKey !== 'string' || !apiKey.trim()) {
+        return res.status(500).json({
+            mensaje: 'CRÍTICO: No se ha configurado la variable GEMINI_API_KEY en Render'
+        });
+    }
+
     const { mensaje } = req.body || {};
     if (typeof mensaje !== 'string' || !mensaje.trim()) {
         return res.status(400).json({ error: 'El mensaje es obligatorio' });
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-        console.error('GEMINI_API_KEY no está configurada');
-        return res.status(503).json({ error: 'El servicio de IA no está configurado' });
     }
 
     const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
@@ -65,7 +66,7 @@ router.post('/chat', async (req, res) => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-goog-api-key': apiKey
+                    'x-goog-api-key': apiKey.trim()
                 },
                 body: JSON.stringify({
                     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
@@ -97,12 +98,17 @@ router.post('/chat', async (req, res) => {
             return res.status(502).json({ error: 'El asistente devolvió una respuesta inválida' });
         }
 
+        const textoLimpio = texto.replace(/```(?:json)?/gi, '').trim();
         let datos;
         try {
-            datos = JSON.parse(texto);
-        } catch (error) {
-            console.error('Gemini devolvió JSON inválido:', error);
-            return res.status(502).json({ error: 'El asistente devolvió una respuesta inválida' });
+            datos = JSON.parse(textoLimpio);
+        } catch (parseError) {
+            console.error('Gemini devolvió JSON inválido:', parseError);
+            return res.status(200).json({
+                respuesta: 'Comprendo, pero tuve problemas estructurando la información. ¿Puedes repetirlo más claramente?',
+                esBorrador: false,
+                mascotaGenerada: null
+            });
         }
 
         if (!esRespuestaValida(datos)) {
@@ -125,8 +131,9 @@ router.post('/chat', async (req, res) => {
             mascotaGenerada
         });
     } catch (error) {
-        console.error('Error en POST /ia/chat:', error);
-        return res.status(502).json({ error: 'No se pudo procesar la solicitud del asistente' });
+        console.error('Error en POST /api/ia/chat:', error);
+        const detalle = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ mensaje: `Error interno: ${detalle}` });
     }
 });
 
