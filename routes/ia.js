@@ -4,9 +4,10 @@ const Groq = require('groq-sdk');
 const router = express.Router();
 
 const SYSTEM_PROMPT = `Eres el asistente virtual de HuellApp, una app colombiana de mascotas perdidas. Responde siempre amablemente y de forma concisa.
-Si el usuario reporta un avistamiento claro, pon esBorrador en true y extrae especie, raza, color y ciudad. Si un dato no está presente, usa un string vacío y no lo inventes.
-Si el usuario solo saluda o el avistamiento no es claro, pon esBorrador en false y mascotaGenerada en null.
-Devuelve únicamente un objeto JSON válido con exactamente estas propiedades: respuesta (string), esBorrador (boolean) y mascotaGenerada (null u objeto con especie, raza, color y ciudad como strings). No agregues texto ni formato Markdown.`;
+Si el usuario reporta que vio una mascota perdida existente, pon esPista en true y pistaGenerada en un objeto con descripcion y ubicacion. En este caso, pon esBorrador en false y mascotaGenerada en null.
+Si el usuario reporta una mascota perdida nueva, pon esBorrador en true, extrae especie, raza, color y ciudad, y usa esPista false con pistaGenerada null. Si un dato no está presente, usa un string vacío y no lo inventes.
+Si el usuario solo saluda o el avistamiento no es claro, pon esBorrador y esPista en false y mascotaGenerada y pistaGenerada en null.
+Devuelve únicamente un objeto JSON válido con exactamente estas propiedades: respuesta (string), esBorrador (boolean), mascotaGenerada (null u objeto con especie, raza, color y ciudad como strings), esPista (boolean) y pistaGenerada (null u objeto con descripcion y ubicacion como strings). No agregues texto ni formato Markdown.`;
 
 const serializarDetalleError = (detalle, apiKey) => {
     let texto;
@@ -32,11 +33,33 @@ const normalizarRespuesta = (datos) => {
         return null;
     }
 
+    if (datos.esPista === true) {
+        const pista = datos.pistaGenerada;
+        if (!pista || typeof pista !== 'object' || Array.isArray(pista) ||
+            typeof pista.descripcion !== 'string' || !pista.descripcion.trim() ||
+            typeof pista.ubicacion !== 'string' || !pista.ubicacion.trim()) {
+            return null;
+        }
+
+        return {
+            respuesta: datos.respuesta,
+            esBorrador: false,
+            mascotaGenerada: null,
+            esPista: true,
+            pistaGenerada: {
+                descripcion: pista.descripcion,
+                ubicacion: pista.ubicacion
+            }
+        };
+    }
+
     if (!datos.esBorrador) {
         return {
             respuesta: datos.respuesta,
             esBorrador: false,
-            mascotaGenerada: null
+            mascotaGenerada: null,
+            esPista: false,
+            pistaGenerada: null
         };
     }
 
@@ -60,7 +83,9 @@ const normalizarRespuesta = (datos) => {
             raza: mascota.raza || '',
             color: mascota.color || '',
             ciudad: mascota.ciudad || ''
-        }
+        },
+        esPista: false,
+        pistaGenerada: null
     };
 };
 
@@ -103,7 +128,9 @@ router.post('/chat', async (req, res) => {
             return res.status(200).json({
                 respuesta: 'Comprendo, pero tuve problemas estructurando la información. ¿Puedes repetirlo más claramente?',
                 esBorrador: false,
-                mascotaGenerada: null
+                mascotaGenerada: null,
+                esPista: false,
+                pistaGenerada: null
             });
         }
 

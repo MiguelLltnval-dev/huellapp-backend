@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Mascota = require('../models/Mascota');
+const Pista = require('../models/Pista');
 const mongoose = require('mongoose');
 const verificarToken = require('../middleware/verificarToken');
 
@@ -35,6 +36,24 @@ router.get('/', async (req, res) => {
     }
 });
 
+// GET: Obtener el historial de pistas de una mascota
+router.get('/:id/pistas', async (req, res) => {
+    try {
+        if (!mongoose.isObjectIdOrHexString(req.params.id)) {
+            return res.status(400).json({ error: 'ID de mascota inválido' });
+        }
+
+        const pistas = await Pista.find({ mascotaId: req.params.id })
+            .populate('usuarioId', 'nombre')
+            .sort({ fecha: -1 });
+
+        return res.status(200).json(pistas);
+    } catch (error) {
+        console.error('Error en GET /mascotas/:id/pistas:', error);
+        return res.status(500).json({ error: 'Error al obtener las pistas' });
+    }
+});
+
 // POST: Registrar Mascota (Emergencia o Adopción)
 router.post('/', verificarToken, async (req, res) => {
     try {
@@ -61,6 +80,45 @@ router.post('/', verificarToken, async (req, res) => {
     } catch (error) {
         console.error("Error en POST /mascotas:", error);
         res.status(500).json({ error: "Error al guardar mascota" });
+    }
+});
+
+// POST: Registrar una pista para una mascota
+router.post('/:id/pistas', verificarToken, async (req, res) => {
+    try {
+        if (!mongoose.isObjectIdOrHexString(req.params.id)) {
+            return res.status(400).json({ error: 'ID de mascota inválido' });
+        }
+
+        const datos = req.body || {};
+        const descripcion = typeof datos.descripcion === 'string'
+            ? datos.descripcion.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\s+/g, ' ').trim()
+            : '';
+        const ubicacion = typeof datos.ubicacion === 'string'
+            ? datos.ubicacion.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\s+/g, ' ').trim()
+            : '';
+
+        if (!descripcion || !ubicacion) {
+            return res.status(400).json({ error: 'Descripción y ubicación son obligatorias' });
+        }
+
+        const mascotaExiste = await Mascota.exists({ _id: req.params.id });
+        if (!mascotaExiste) {
+            return res.status(404).json({ error: 'Mascota no encontrada' });
+        }
+
+        const pista = await new Pista({
+            mascotaId: req.params.id,
+            usuarioId: req.usuarioId,
+            descripcion,
+            ubicacion
+        }).save();
+        await pista.populate('usuarioId', 'nombre');
+
+        return res.status(201).json(pista);
+    } catch (error) {
+        console.error('Error en POST /mascotas/:id/pistas:', error);
+        return res.status(500).json({ error: 'Error al guardar la pista' });
     }
 });
 
