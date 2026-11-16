@@ -23,6 +23,8 @@ app.get('/', (req, res) => {
 
 app.use('/api/usuarios', require('./routes/usuarios'));
 app.use('/api/mascotas', require('./routes/mascotas'));
+app.use('/api/ia', require('./routes/ia'));
+app.use('/api', require('./routes/chat'));
 
 // Iniciar Servidor en 0.0.0.0 para evitar el bloqueo del emulador
 const PORT = process.env.PORT || 3000;

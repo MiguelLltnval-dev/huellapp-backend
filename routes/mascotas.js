@@ -11,8 +11,24 @@ router.get('/', async (req, res) => {
         let filtro = {};
         if (tipo) filtro.tipoPublicacion = tipo;
 
-        const mascotas = await Mascota.find(filtro).sort({ createdAt: -1 });
-        res.status(200).json(mascotas);
+        const mascotas = await Mascota.find(filtro)
+            .sort({ createdAt: -1 })
+            .populate('usuarioId', 'celular telefono');
+        const respuesta = mascotas.map((mascota) => {
+            const datos = mascota.toObject();
+            const usuario = datos.usuarioId;
+            datos.celularDueno = usuario && typeof usuario === 'object'
+                ? usuario.celular || usuario.telefono || null
+                : null;
+
+            if (usuario && usuario._id) {
+                datos.usuarioId = usuario._id;
+            }
+
+            return datos;
+        });
+
+        res.status(200).json(respuesta);
     } catch (error) {
         console.error("Error en GET /mascotas:", error);
         res.status(500).json({ error: "Error interno del servidor" });

@@ -9,6 +9,9 @@ const UsuarioSchema = new mongoose.Schema({
     departamento: { type: String, required: false },
     celular: { type: String },
     ciudad: { type: String, required: false },
+    fotoPerfil: { type: String, default: '' },
+    passwordResetTokenHash: { type: String, default: null },
+    passwordResetExpires: { type: Date, default: null },
     identidadVerificada: { type: Boolean, default: false }
 }, { timestamps: true });
 
