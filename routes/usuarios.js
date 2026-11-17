@@ -129,10 +129,10 @@ router.post('/recuperar', async (req, res) => {
     const email = normalizarCorreo(req.body?.email);
     if (!correoValido(email)) return res.status(400).json({ mensaje: 'Ingresa un correo válido.' });
 
-    const apiKey = process.env.RESEND_API_KEY?.trim();
+    const apiKey = process.env.BREVO_API_KEY?.trim();
     const remitente = process.env.RECOVERY_EMAIL_FROM?.trim();
     if (!apiKey || !remitente) {
-        console.error('Recuperación: faltan RESEND_API_KEY o RECOVERY_EMAIL_FROM');
+        console.error('Recuperación: faltan BREVO_API_KEY o RECOVERY_EMAIL_FROM');
         return res.status(503).json({ mensaje: 'El servicio de recuperación no está disponible.' });
     }
 
@@ -151,18 +151,18 @@ router.post('/recuperar', async (req, res) => {
         if (!anterior) return res.json(respuestaRecuperacion);
 
         try {
-            const respuesta = await fetch('https://api.resend.com/emails', {
+            const respuesta = await fetch('https://api.brevo.com/v3/smtp/email', {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+                headers: { 'api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
                 body: JSON.stringify({
-                    from: remitente,
-                    to: [email],
+                    sender: { name: 'HuellApp', email: remitente },
+                    to: [{ email }],
                     subject: 'Código de recuperación de HuellApp',
-                    text: `Tu código es ${codigo}. Escríbelo en HuellApp junto con tu nueva contraseña. El código vence en 15 minutos. Si no lo pediste, ignora este correo.`
+                    textContent: `Tu código es ${codigo}. Escríbelo en HuellApp junto con tu nueva contraseña. El código vence en 15 minutos. Si no lo pediste, ignora este correo.`
                 }),
                 signal: AbortSignal.timeout(10000)
             });
-            if (!respuesta.ok) throw new Error(`Resend HTTP ${respuesta.status}`);
+            if (!respuesta.ok) throw new Error(`Brevo HTTP ${respuesta.status}`);
         } catch (error) {
             await Usuario.updateOne({ _id: anterior._id, passwordResetTokenHash: tokenHash }, { $set: {
                 passwordResetTokenHash: anterior.passwordResetTokenHash ?? null,
