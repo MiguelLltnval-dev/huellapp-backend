@@ -1,9 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const Usuario = require('../models/Usuario');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const verificarToken = require('../middleware/verificarToken');
 
 const camposPublicosUsuario = (usuario) => ({
@@ -122,24 +124,60 @@ router.post('/recuperar', async (req, res) => {
     try {
         const { email } = req.body || {};
         if (typeof email !== 'string' || !email.trim()) {
-            return res.status(400).json({ error: 'El email es obligatorio' });
+            return res.status(400).json({ mensaje: 'El email es obligatorio' });
         }
 
         const usuario = await Usuario.findOne({ email: email.trim().toLowerCase() });
         if (!usuario) {
-            return res.status(404).json({ error: 'Usuario no encontrado' });
+            return res.status(404).json({ mensaje: 'El correo no existe' });
         }
 
-        const token = crypto.randomBytes(32).toString('hex');
-        usuario.passwordResetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
-        usuario.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000);
-        await usuario.save();
+        const caracteres = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+        const claveTemporal = Array.from({ length: 8 }, () =>
+            caracteres[crypto.randomInt(caracteres.length)]
+        ).join('');
 
-        console.log('Simulando envío a:', usuario.email);
-        return res.status(200).json({ mensaje: 'Solicitud de recuperación procesada' });
+        const passwordHash = await bcrypt.hash(claveTemporal, 10);
+        const actualizacion = await Usuario.updateOne(
+            { _id: usuario._id },
+            {
+                $set: {
+                    password: passwordHash,
+                    passwordResetTokenHash: null,
+                    passwordResetExpires: null
+                }
+            }
+        );
+        if (actualizacion.matchedCount !== 1) {
+            throw new Error('No se pudo actualizar la contraseña del usuario');
+        }
+
+        const transportador = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASS
+            }
+        });
+        const nombreSeguro = String(usuario.nombre || 'usuario')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+        await transportador.sendMail({
+            from: process.env.EMAIL_USER,
+            to: usuario.email,
+            subject: 'Tu contraseña temporal de HuellApp',
+            text: `Hola ${usuario.nombre || 'usuario'}, hemos reseteado tu contraseña. Tu contraseña temporal para iniciar sesión en HuellApp es: ${claveTemporal}. Por favor, inicia sesión y no la compartas.`,
+            html: `<p>Hola ${nombreSeguro},</p><p>Hemos reseteado tu contraseña. Tu contraseña temporal para iniciar sesión en HuellApp es:</p><p><strong>${claveTemporal}</strong></p><p>Por favor, inicia sesión y no la compartas.</p>`
+        });
+
+        return res.status(200).json({ mensaje: 'Contraseña temporal enviada al correo' });
     } catch (error) {
         console.error('Error en POST /usuarios/recuperar:', error);
-        return res.status(500).json({ error: 'Error al solicitar recuperación' });
+        return res.status(500).json({ mensaje: 'Error al recuperar la contraseña' });
     }
 });
 
