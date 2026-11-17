@@ -5,7 +5,6 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 const verificarToken = require('../middleware/verificarToken');
 
 const camposPublicosUsuario = (usuario) => ({
@@ -119,65 +118,92 @@ router.patch('/:id/perfil', verificarToken, async (req, res) => {
     }
 });
 
-// POST: Solicitar recuperación de contraseña
+const vigenciaCodigo = 15 * 60 * 1000;
+const esperaReenvio = 60 * 1000;
+const hashCodigo = (codigo) => crypto.createHash('sha256').update(codigo).digest('hex');
+const normalizarCorreo = (email) => typeof email === 'string' ? email.trim().toLowerCase() : '';
+const correoValido = (email) => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const respuestaRecuperacion = { mensaje: 'Si el correo está registrado, recibirás un código de recuperación.' };
+
 router.post('/recuperar', async (req, res) => {
+    const email = normalizarCorreo(req.body?.email);
+    if (!correoValido(email)) return res.status(400).json({ mensaje: 'Ingresa un correo válido.' });
+
+    const apiKey = process.env.RESEND_API_KEY?.trim();
+    const remitente = process.env.RECOVERY_EMAIL_FROM?.trim();
+    if (!apiKey || !remitente) {
+        console.error('Recuperación: faltan RESEND_API_KEY o RECOVERY_EMAIL_FROM');
+        return res.status(503).json({ mensaje: 'El servicio de recuperación no está disponible.' });
+    }
+
+    const codigo = crypto.randomBytes(8).toString('hex').toUpperCase();
+    const tokenHash = hashCodigo(codigo);
+    const ahora = Date.now();
     try {
-        const { email } = req.body || {};
-        if (typeof email !== 'string' || !email.trim()) {
-            return res.status(400).json({ mensaje: 'El email es obligatorio' });
-        }
-
-        const usuario = await Usuario.findOne({ email: email.trim().toLowerCase() });
-        if (!usuario) {
-            return res.status(404).json({ mensaje: 'El correo no existe' });
-        }
-
-        const caracteres = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-        const claveTemporal = Array.from({ length: 8 }, () =>
-            caracteres[crypto.randomInt(caracteres.length)]
-        ).join('');
-
-        const passwordHash = await bcrypt.hash(claveTemporal, 10);
-        const actualizacion = await Usuario.updateOne(
-            { _id: usuario._id },
-            {
-                $set: {
-                    password: passwordHash,
-                    passwordResetTokenHash: null,
-                    passwordResetExpires: null
-                }
-            }
+        const anterior = await Usuario.findOneAndUpdate(
+            { email, $or: [
+                { passwordResetExpires: null },
+                { passwordResetExpires: { $lte: new Date(ahora + vigenciaCodigo - esperaReenvio) } }
+            ] },
+            { $set: { passwordResetTokenHash: tokenHash, passwordResetExpires: new Date(ahora + vigenciaCodigo) } },
+            { projection: { passwordResetTokenHash: 1, passwordResetExpires: 1 }, returnDocument: 'before' }
         );
-        if (actualizacion.matchedCount !== 1) {
-            throw new Error('No se pudo actualizar la contraseña del usuario');
+        if (!anterior) return res.json(respuestaRecuperacion);
+
+        try {
+            const respuesta = await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    from: remitente,
+                    to: [email],
+                    subject: 'Código de recuperación de HuellApp',
+                    text: `Tu código es ${codigo}. Escríbelo en HuellApp junto con tu nueva contraseña. El código vence en 15 minutos. Si no lo pediste, ignora este correo.`
+                }),
+                signal: AbortSignal.timeout(10000)
+            });
+            if (!respuesta.ok) throw new Error(`Resend HTTP ${respuesta.status}`);
+        } catch (error) {
+            await Usuario.updateOne({ _id: anterior._id, passwordResetTokenHash: tokenHash }, { $set: {
+                passwordResetTokenHash: anterior.passwordResetTokenHash ?? null,
+                passwordResetExpires: anterior.passwordResetExpires ?? null
+            } });
+            console.error('Error al enviar recuperación:', error.message);
+            return res.status(503).json({ mensaje: 'No se pudo enviar el código. Intenta de nuevo.' });
         }
-
-        const transportador = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS
-            }
-        });
-        const nombreSeguro = String(usuario.nombre || 'usuario')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-
-        await transportador.sendMail({
-            from: process.env.EMAIL_USER,
-            to: usuario.email,
-            subject: 'Tu contraseña temporal de HuellApp',
-            text: `Hola ${usuario.nombre || 'usuario'}, hemos reseteado tu contraseña. Tu contraseña temporal para iniciar sesión en HuellApp es: ${claveTemporal}. Por favor, inicia sesión y no la compartas.`,
-            html: `<p>Hola ${nombreSeguro},</p><p>Hemos reseteado tu contraseña. Tu contraseña temporal para iniciar sesión en HuellApp es:</p><p><strong>${claveTemporal}</strong></p><p>Por favor, inicia sesión y no la compartas.</p>`
-        });
-
-        return res.status(200).json({ mensaje: 'Contraseña temporal enviada al correo' });
+        return res.json(respuestaRecuperacion);
     } catch (error) {
-        console.error('Error en POST /usuarios/recuperar:', error);
-        return res.status(500).json({ mensaje: 'Error al recuperar la contraseña' });
+        console.error('Error al solicitar recuperación:', error.name);
+        return res.status(500).json({ mensaje: 'No se pudo procesar la solicitud.' });
+    }
+});
+
+router.post('/recuperar/confirmar', async (req, res) => {
+    const email = normalizarCorreo(req.body?.email);
+    const codigo = typeof req.body?.codigo === 'string' ? req.body.codigo.trim().toUpperCase() : '';
+    const password = req.body?.password;
+    if (!correoValido(email) || !/^[A-F0-9]{16}$/.test(codigo) ||
+        typeof password !== 'string' || password.trim().length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
+        return res.status(400).json({ mensaje: 'Revisa el correo, el código y la nueva contraseña.' });
+    }
+    try {
+        const filtro = {
+            email,
+            passwordResetTokenHash: hashCodigo(codigo),
+            passwordResetExpires: { $gt: new Date() }
+        };
+        if (await Usuario.exists(filtro)) {
+            const passwordHash = await bcrypt.hash(password, 10);
+            filtro.passwordResetExpires.$gt = new Date();
+            const resultado = await Usuario.updateOne(filtro, { $set: {
+                password: passwordHash, passwordResetTokenHash: null, passwordResetExpires: null
+            } });
+            if (resultado.modifiedCount === 1) return res.json({ mensaje: 'Contraseña actualizada.' });
+        }
+        return res.status(400).json({ mensaje: 'El código es incorrecto o venció. Puedes solicitar otro.' });
+    } catch (error) {
+        console.error('Error al confirmar recuperación:', error.name);
+        return res.status(500).json({ mensaje: 'No se pudo actualizar la contraseña.' });
     }
 });
 

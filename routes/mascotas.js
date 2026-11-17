@@ -5,6 +5,14 @@ const Pista = require('../models/Pista');
 const mongoose = require('mongoose');
 const verificarToken = require('../middleware/verificarToken');
 
+function serializarMascota(mascota) {
+    const datos = mascota.toObject();
+    const usuario = datos.usuarioId;
+    datos.celularDueno = usuario?.celular || usuario?.telefono || null;
+    if (usuario?._id) datos.usuarioId = usuario._id;
+    return datos;
+}
+
 // GET: Obtener mascotas (Permite filtrar por emergencia o adopción)
 router.get('/', async (req, res) => {
     try {
@@ -15,24 +23,26 @@ router.get('/', async (req, res) => {
         const mascotas = await Mascota.find(filtro)
             .sort({ createdAt: -1 })
             .populate('usuarioId', 'celular telefono');
-        const respuesta = mascotas.map((mascota) => {
-            const datos = mascota.toObject();
-            const usuario = datos.usuarioId;
-            datos.celularDueno = usuario && typeof usuario === 'object'
-                ? usuario.celular || usuario.telefono || null
-                : null;
-
-            if (usuario && usuario._id) {
-                datos.usuarioId = usuario._id;
-            }
-
-            return datos;
-        });
+        const respuesta = mascotas.map(serializarMascota);
 
         res.status(200).json(respuesta);
     } catch (error) {
         console.error("Error en GET /mascotas:", error);
         res.status(500).json({ error: "Error interno del servidor" });
+    }
+});
+
+router.get('/:id', async (req, res) => {
+    if (!mongoose.isObjectIdOrHexString(req.params.id)) {
+        return res.status(400).json({ error: 'ID de mascota inválido' });
+    }
+    try {
+        const mascota = await Mascota.findById(req.params.id).populate('usuarioId', 'celular telefono');
+        if (!mascota) return res.status(404).json({ error: 'Mascota no encontrada' });
+        return res.json(serializarMascota(mascota));
+    } catch (error) {
+        console.error('Error al obtener el reporte:', error);
+        return res.status(500).json({ error: 'Error al obtener el reporte' });
     }
 });
 
@@ -102,9 +112,12 @@ router.post('/:id/pistas', verificarToken, async (req, res) => {
             return res.status(400).json({ error: 'Descripción y ubicación son obligatorias' });
         }
 
-        const mascotaExiste = await Mascota.exists({ _id: req.params.id });
-        if (!mascotaExiste) {
+        const mascota = await Mascota.findById(req.params.id).select('estado');
+        if (!mascota) {
             return res.status(404).json({ error: 'Mascota no encontrada' });
+        }
+        if (mascota.estado !== 'PERDIDO') {
+            return res.status(409).json({ error: 'La mascota ya está en casa' });
         }
 
         const pista = await new Pista({
@@ -125,7 +138,7 @@ router.post('/:id/pistas', verificarToken, async (req, res) => {
 // PATCH: Actualizar el estado de una mascota
 router.patch('/:id/estado', verificarToken, async (req, res) => {
     try {
-        let estadoNormalizado = req.body.estado;
+        let estadoNormalizado = req.body?.estado;
         if (estadoNormalizado === 'EN_CASA') estadoNormalizado = 'EN CASA';
         if (!['EN CASA', 'PERDIDO'].includes(estadoNormalizado)) {
             return res.status(400).json({ error: 'Estado inválido' });
