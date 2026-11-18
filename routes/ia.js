@@ -1,5 +1,6 @@
 const express = require('express');
 const Groq = require('groq-sdk');
+const { contextoPista } = require('../services/contextoPista');
 const { buscarMascotas, detectarBusqueda } = require('../services/buscarMascotas');
 
 const router = express.Router();
@@ -75,11 +76,11 @@ const normalizarRespuesta = (datos) => {
 };
 
 router.post('/chat', async (req, res) => {
-    const { mensaje, contexto, modoPista } = req.body || {};
+    const { mensaje, contexto, modoPista, pistaActual } = req.body || {};
     if (typeof mensaje !== 'string' || !mensaje.trim() || mensaje.length > 2000) {
         return res.status(400).json({ error: 'El mensaje debe tener entre 1 y 2000 caracteres' });
     }
-    const contextoSeguro = typeof contexto === 'string' ? contexto.trim().slice(0, 1000) : '';
+    const contextoSeguro = (typeof contexto === 'string' ? contexto.trim().slice(-1000) : '') + contextoPista(modoPista, pistaActual);
     const deteccion = detectarBusqueda(mensaje);
     const responderBusqueda = async (criterios, avistamiento) => {
         try {
