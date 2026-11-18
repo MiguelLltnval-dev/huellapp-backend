@@ -1,0 +1,12 @@
+const express = require('express');
+const cors = require('cors');
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.get('/', (req, res) => res.json({ status: 'OK', message: 'API HuellApp en Producción' }));
+app.use('/api/usuarios', require('./routes/usuarios'));
+app.use('/api/mascotas', require('./routes/mascotas'));
+app.use('/api/ia', require('./routes/ia'));
+app.use('/api', require('./routes/ia'));
+module.exports = app;

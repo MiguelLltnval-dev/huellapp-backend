@@ -34,10 +34,14 @@ router.post('/registro', async (req, res) => {
         };
 
         if ([datos.nombre, datos.email, datos.password].some((valor) =>
-            valor === null || valor === undefined ||
-            (typeof valor === 'string' && valor.trim() === '')
+            typeof valor !== 'string' || valor.trim() === ''
         )) {
             return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+        }
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(datos.email) || datos.email.length > 254 ||
+            datos.password.trim().length < 8 || Buffer.byteLength(datos.password, 'utf8') > 72) {
+            return res.status(400).json({ error: 'Revisa el correo y la contraseña (mínimo 8 caracteres y máximo 72 bytes)' });
         }
 
         const emailNormalizado = datos.email.toLowerCase();
@@ -85,6 +89,12 @@ router.patch('/:id/perfil', verificarToken, async (req, res) => {
             return res.status(400).json({ error: 'Los datos del perfil son inválidos' });
         }
 
+        // Compatibilidad con las APK anteriores que serializaban celular como telefono.
+        if (!Object.prototype.hasOwnProperty.call(datos, 'celular') &&
+            Object.prototype.hasOwnProperty.call(datos, 'telefono')) {
+            datos.celular = datos.telefono;
+        }
+
         const camposPermitidos = ['nombre', 'celular', 'departamento', 'ciudad', 'fotoPerfil'];
         const camposRecibidos = camposPermitidos.filter((campo) =>
             Object.prototype.hasOwnProperty.call(datos, campo)
@@ -106,6 +116,7 @@ router.patch('/:id/perfil', verificarToken, async (req, res) => {
         camposRecibidos.forEach((campo) => {
             usuario[campo] = datos[campo];
         });
+        if (camposRecibidos.includes('celular')) usuario.telefono = datos.celular;
 
         const actualizado = await usuario.save();
         return res.status(200).json({
